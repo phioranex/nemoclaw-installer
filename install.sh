@@ -131,6 +131,28 @@ require_cmd() {
   command -v "$1" >/dev/null 2>&1
 }
 
+detect_shell_rc() {
+  if [[ -n "${ZSH_VERSION:-}" ]] || [[ "${SHELL:-}" == *"zsh" ]]; then
+    echo "${HOME}/.zshrc"
+  elif [[ -n "${BASH_VERSION:-}" ]] || [[ "${SHELL:-}" == *"bash" ]]; then
+    echo "${HOME}/.bashrc"
+  else
+    echo "${HOME}/.profile"
+  fi
+}
+
+ensure_line_in_file() {
+  local file="$1"
+  local line_text="$2"
+
+  touch "$file"
+
+  if ! grep -Fqx "$line_text" "$file" 2>/dev/null; then
+    printf "\n%s\n" "$line_text" >> "$file"
+    success "Updated $file so Node.js works in new terminals."
+  fi
+}
+
 need_sudo() {
   [[ "${EUID:-$(id -u)}" -ne 0 ]]
 }
@@ -288,6 +310,20 @@ install_macos_prereqs() {
   fi
 }
 
+persist_macos_node_path() {
+  local node24_bin shell_rc line_text
+
+  [[ "$OS" == "macos" ]] || return 0
+  require_cmd brew || return 0
+
+  node24_bin="$(brew --prefix node@24 2>/dev/null)/bin"
+  [[ -d "$node24_bin" ]] || return 0
+
+  line_text="export PATH=\"${node24_bin}:\$PATH\""
+  shell_rc="$(detect_shell_rc)"
+  ensure_line_in_file "$shell_rc" "$line_text"
+}
+
 linux_pkg_manager() {
   if require_cmd apt-get; then
     echo "apt"
@@ -365,18 +401,18 @@ ensure_requirements() {
   if ! node_version_ok; then
     die "Node.js $(node -v) is too old. Please install Node ${MIN_NODE_MAJOR}.${MIN_NODE_MINOR}+ or Node ${RECOMMENDED_NODE_MAJOR}."
   fi
+
+  persist_macos_node_path
 }
 
 install_openclaw() {
-  local flags=()
-
-  if (( SKIP_ONBOARD == 1 )); then
-    flags+=(--no-onboard)
-  fi
-
   step 3 "Installing OpenClaw"
   log "Running the public OpenClaw installer"
-  curl -fsSL "${OPENCLAW_INSTALL_URL}" | bash -s -- "${flags[@]}"
+  if (( SKIP_ONBOARD == 1 )); then
+    curl -fsSL "${OPENCLAW_INSTALL_URL}" | bash -s -- --no-onboard
+  else
+    curl -fsSL "${OPENCLAW_INSTALL_URL}" | bash
+  fi
 }
 
 remove_path_if_exists() {
