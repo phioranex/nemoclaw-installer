@@ -97,6 +97,7 @@ Options:
   --yes, -y            Non-interactive mode where possible
   --skip-onboard       Install the nemoclaw CLI only, then stop
   --uninstall          Run the official NemoClaw uninstaller
+  --target VALUE       Uninstall target: nemoclaw, openclaw, or both
   --keep-openshell     Preserve the openshell binary during uninstall
   --delete-models      Remove Ollama models during uninstall
   --help, -h           Show this help text
@@ -113,6 +114,7 @@ DELETE_MODELS=0
 TOTAL_STEPS=4
 SUDO=""
 OS=""
+UNINSTALL_TARGET="ask"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -124,6 +126,11 @@ while [[ $# -gt 0 ]]; do
       ;;
     --uninstall)
       UNINSTALL_MODE=1
+      ;;
+    --target)
+      shift
+      [[ $# -gt 0 ]] || die "--target requires one of: nemoclaw, openclaw, both"
+      UNINSTALL_TARGET="$1"
       ;;
     --keep-openshell)
       KEEP_OPENSHELL=1
@@ -239,6 +246,52 @@ latest_openshell_version() {
   else
     printf "%s\n" "${FALLBACK_OPENSHELL_VERSION}"
   fi
+}
+
+normalize_uninstall_target() {
+  case "$1" in
+    nemoclaw|nemo)
+      printf "nemoclaw\n"
+      ;;
+    openclaw|open)
+      printf "openclaw\n"
+      ;;
+    both|all)
+      printf "both\n"
+      ;;
+    ask|"")
+      printf "ask\n"
+      ;;
+    *)
+      die "Unknown uninstall target '$1'. Use nemoclaw, openclaw, or both."
+      ;;
+  esac
+}
+
+choose_uninstall_target() {
+  if (( NONINTERACTIVE == 1 )); then
+    printf "both\n"
+    return 0
+  fi
+
+  print_block "
+${COLOR_BOLD}What do you want to remove?${COLOR_RESET}
+  1. NemoClaw only
+  2. OpenClaw only
+  3. Both NemoClaw and OpenClaw
+
+"
+
+  while true; do
+    read -r -p "Select 1, 2, or 3 [3]: " choice
+    choice="${choice:-3}"
+    case "$choice" in
+      1) printf "nemoclaw\n"; return 0 ;;
+      2) printf "openclaw\n"; return 0 ;;
+      3) printf "both\n"; return 0 ;;
+      *) warn "Please choose 1, 2, or 3." ;;
+    esac
+  done
 }
 
 node_version_ok() {
@@ -547,17 +600,7 @@ Useful references:
 "
 }
 
-run_uninstall() {
-  headline "Official NemoClaw removal"
-  feature "This uses NVIDIA's official NemoClaw uninstaller."
-  feature "It removes NemoClaw state, OpenShell sandboxes, gateway/providers, and the global nemoclaw package."
-  feature "By default it preserves shared tools such as Docker, Node.js, npm, and Ollama."
-  printf "\n"
-
-  if ! confirm "Continue and remove NemoClaw?"; then
-    die "Removal cancelled by user."
-  fi
-
+run_nemoclaw_uninstall() {
   log "Running NVIDIA's official NemoClaw uninstaller"
   if (( NONINTERACTIVE == 1 )) && (( KEEP_OPENSHELL == 1 )) && (( DELETE_MODELS == 1 )); then
     curl -fsSL "${NEMOCLAW_UNINSTALL_URL}" | bash -s -- --yes --keep-openshell --delete-models
@@ -576,6 +619,88 @@ run_uninstall() {
   else
     curl -fsSL "${NEMOCLAW_UNINSTALL_URL}" | bash
   fi
+}
+
+remove_path_if_exists() {
+  local target="$1"
+  if [[ -e "$target" || -L "$target" ]]; then
+    log "Removing $target"
+    rm -rf "$target"
+  fi
+}
+
+run_openclaw_uninstall() {
+  log "Removing OpenClaw"
+
+  if require_cmd openclaw; then
+    if openclaw uninstall --all --yes --non-interactive; then
+      success "OpenClaw uninstall completed."
+    else
+      warn "OpenClaw CLI uninstall did not complete cleanly. Continuing with manual cleanup."
+    fi
+  else
+    warn "'openclaw' command not found. Continuing with manual cleanup."
+  fi
+
+  if require_cmd npm; then
+    npm rm -g openclaw >/dev/null 2>&1 || true
+  fi
+
+  case "$OS" in
+    macos)
+      launchctl bootout "gui/${UID}/ai.openclaw.gateway" >/dev/null 2>&1 || true
+      remove_path_if_exists "${HOME}/Library/LaunchAgents/ai.openclaw.gateway.plist"
+      remove_path_if_exists "${HOME}/Library/LaunchAgents/com.openclaw.gateway.plist"
+      ;;
+    linux)
+      if require_cmd systemctl; then
+        systemctl --user disable --now openclaw-gateway.service >/dev/null 2>&1 || true
+        remove_path_if_exists "${HOME}/.config/systemd/user/openclaw-gateway.service"
+        systemctl --user daemon-reload >/dev/null 2>&1 || true
+      fi
+      ;;
+  esac
+
+  remove_path_if_exists "${OPENCLAW_STATE_DIR:-$HOME/.openclaw}"
+  remove_path_if_exists "${HOME}/.openclaw-default"
+  remove_path_if_exists "${HOME}/.config/openclaw"
+  success "OpenClaw cleanup completed."
+}
+
+run_uninstall() {
+  local target
+
+  detect_os
+  target="$(normalize_uninstall_target "${UNINSTALL_TARGET}")"
+  if [[ "$target" == "ask" ]]; then
+    target="$(choose_uninstall_target)"
+  fi
+
+  headline "Uninstall"
+  feature "Target: ${target}"
+  if [[ "$target" == "nemoclaw" || "$target" == "both" ]]; then
+    feature "NemoClaw removal uses NVIDIA's official uninstaller."
+  fi
+  if [[ "$target" == "openclaw" || "$target" == "both" ]]; then
+    feature "OpenClaw removal uses the CLI uninstall first, then local cleanup if needed."
+  fi
+  printf "\n"
+
+  case "$target" in
+    nemoclaw)
+      confirm "Continue and remove NemoClaw?" || die "Removal cancelled by user."
+      run_nemoclaw_uninstall
+      ;;
+    openclaw)
+      confirm "Continue and remove OpenClaw?" || die "Removal cancelled by user."
+      run_openclaw_uninstall
+      ;;
+    both)
+      confirm "Continue and remove both NemoClaw and OpenClaw?" || die "Removal cancelled by user."
+      run_nemoclaw_uninstall
+      run_openclaw_uninstall
+      ;;
+  esac
 }
 
 show_intro() {

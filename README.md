@@ -95,19 +95,49 @@ curl -fsSL https://raw.githubusercontent.com/phioranex/nemoclaw-installer/main/i
 curl -fsSL https://raw.githubusercontent.com/phioranex/nemoclaw-installer/main/uninstall.sh | bash
 ```
 
-This calls the official NVIDIA NemoClaw uninstaller. NVIDIA says it removes:
+This now asks the user what to remove:
+
+- NemoClaw only
+- OpenClaw only
+- both NemoClaw and OpenClaw
+
+NemoClaw removal uses the official NVIDIA uninstaller. OpenClaw removal uses the CLI uninstall first and then cleans up the common local state if needed.
+
+For NemoClaw, NVIDIA says the official uninstall removes:
 
 - NemoClaw state
 - OpenShell sandboxes, gateway, and providers
 - related Docker images and containers
 - the global `nemoclaw` npm package
 
-It does not remove shared tooling like Docker, Node.js, npm, or Ollama by default.
+It still does not remove shared tooling like Docker, Node.js, npm, or Ollama by default.
 
 ### Non-interactive full removal
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/phioranex/nemoclaw-installer/main/uninstall.sh | bash -s -- --yes
+```
+
+In non-interactive mode, the default target is both.
+
+### Non-interactive target selection
+
+Remove only NemoClaw:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/phioranex/nemoclaw-installer/main/uninstall.sh | bash -s -- --yes --target nemoclaw
+```
+
+Remove only OpenClaw:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/phioranex/nemoclaw-installer/main/uninstall.sh | bash -s -- --yes --target openclaw
+```
+
+Remove both:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/phioranex/nemoclaw-installer/main/uninstall.sh | bash -s -- --yes --target both
 ```
 
 ### Keep OpenShell during uninstall
@@ -116,11 +146,15 @@ curl -fsSL https://raw.githubusercontent.com/phioranex/nemoclaw-installer/main/u
 curl -fsSL https://raw.githubusercontent.com/phioranex/nemoclaw-installer/main/uninstall.sh | bash -s -- --keep-openshell
 ```
 
+This applies when NemoClaw is part of the selected uninstall target.
+
 ### Also remove Ollama models
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/phioranex/nemoclaw-installer/main/uninstall.sh | bash -s -- --delete-models
 ```
+
+This applies when NemoClaw is part of the selected uninstall target.
 
 ## After install
 
