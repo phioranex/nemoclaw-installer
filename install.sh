@@ -64,6 +64,10 @@ step() {
   printf "%b\n" "${COLOR_CYAN}[$1/${TOTAL_STEPS}]${COLOR_RESET} $2"
 }
 
+print_block() {
+  printf "%b" "$1"
+}
+
 print_banner() {
   cat <<'EOF'
  _   _                        ____ _                    
@@ -212,6 +216,13 @@ confirm() {
   read -r -p "$prompt [Y/n] " reply
   reply="${reply:-Y}"
   [[ "$reply" =~ ^([Yy]|[Yy][Ee][Ss])$ ]]
+}
+
+warn_about_github_token() {
+  if [[ -n "${GH_TOKEN:-}" || -n "${GITHUB_TOKEN:-}" ]]; then
+    warn "Detected GH_TOKEN or GITHUB_TOKEN in the environment."
+    warn "If the OpenShell installer fails with 'HTTP 401: Bad credentials', unset those variables and rerun."
+  fi
 }
 
 node_version_ok() {
@@ -452,38 +463,37 @@ install_nemoclaw_cli() {
 
 run_nemoclaw_onboard() {
   step 4 "Launching the NemoClaw onboarding wizard"
-  cat <<EOF
-
+  print_block "
 ${COLOR_BOLD}Heads up${COLOR_RESET}
 - The official wizard will prompt for your NVIDIA API key.
 - The first run stores it in ${COLOR_CYAN}~/.nemoclaw/credentials.json${COLOR_RESET}, per NVIDIA's docs.
 - NemoClaw will create a sandboxed OpenClaw instance during onboarding.
 
-EOF
+"
   if (( NONINTERACTIVE == 1 )); then
     warn "Non-interactive mode installs the CLI, but onboarding still requires interactive answers for the API key and sandbox setup."
   fi
 
+  warn_about_github_token
   run_cmd nemoclaw onboard
 }
 
 run_official_installer() {
   step 3 "Running NVIDIA's official NemoClaw installer"
-  cat <<EOF
-
+  print_block "
 ${COLOR_BOLD}Heads up${COLOR_RESET}
 - The official installer will prompt for your NVIDIA API key.
 - NemoClaw creates a fresh OpenClaw instance inside the sandbox during onboarding.
 - After install, use ${COLOR_CYAN}nemoclaw --help${COLOR_RESET} for the full CLI reference.
 
-EOF
+"
+  warn_about_github_token
   curl -fsSL "${NEMOCLAW_INSTALL_URL}" | bash
 }
 
 print_install_summary() {
   headline "You are ready to launch"
-  cat <<EOF
-
+  print_block "
 ${COLOR_GREEN}${COLOR_BOLD}NemoClaw install complete.${COLOR_RESET}
 
 Recommended next steps:
@@ -497,7 +507,7 @@ Useful references:
 - Quickstart: https://docs.nvidia.com/nemoclaw/latest/quickstart.html
 - Commands: https://docs.nvidia.com/nemoclaw/latest/reference/commands.html
 
-EOF
+"
 }
 
 run_uninstall() {
@@ -535,29 +545,26 @@ show_intro() {
   clear 2>/dev/null || true
   print_banner
   headline "Beginner-friendly setup for NVIDIA NemoClaw"
-  cat <<EOF
-
+  print_block "
 ${COLOR_BOLD}What NemoClaw is${COLOR_RESET}
-EOF
+"
   feature "the host-side security stack and CLI from NVIDIA"
   feature "a way to run OpenClaw inside NVIDIA OpenShell with managed policy and inference"
   feature "an onboarding flow that prompts for your NVIDIA API key and creates a sandboxed agent"
-  cat <<EOF
-
+  print_block "
 ${COLOR_BOLD}What this script does${COLOR_RESET}
-EOF
+"
   feature "installs missing beginner-unfriendly dependencies"
   feature "checks for a supported container runtime"
   feature "installs the NemoClaw CLI or runs NVIDIA's official installer"
   feature "makes PATH updates stick for future terminals when needed"
-  cat <<EOF
-
+  print_block "
 Official docs verified on March 24, 2026:
 - Quick install: ${NEMOCLAW_INSTALL_URL}
 - API key prompt happens during ${COLOR_CYAN}nemoclaw onboard${COLOR_RESET}
 - The first run saves credentials to ${COLOR_CYAN}~/.nemoclaw/credentials.json${COLOR_RESET}
 
-EOF
+"
 }
 
 show_install_overview() {
@@ -595,14 +602,13 @@ main() {
   if (( SKIP_ONBOARD == 1 )); then
     install_nemoclaw_cli
     step 4 "Skipping onboarding"
-    cat <<EOF
-
+    print_block "
 ${COLOR_GREEN}${COLOR_BOLD}NemoClaw CLI installed.${COLOR_RESET}
 
 Next step:
 - Run ${COLOR_CYAN}nemoclaw onboard${COLOR_RESET} when you are ready to enter your NVIDIA API key and create the sandbox.
 
-EOF
+"
   else
     run_official_installer
     step 4 "Wrapping up"
