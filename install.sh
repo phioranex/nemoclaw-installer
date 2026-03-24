@@ -21,6 +21,17 @@ warn() { echo "⚠️  $1" >&2; }
 error() { echo "❌ $1" >&2; exit 1; }
 prompt() { local d="${2:-N}"; read -rp "$1 [$d] " r; echo "${r:-$d}"; }
 
+# portable fetch: prefer curl, fall back to wget
+fetch() {
+  if command -v curl >/dev/null 2>&1; then
+    curl -sSL "$@"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -qO- "$@"
+  else
+    error "curl or wget required to download assets."
+  fi
+}
+
 # --- DETECT ARCH/OS ---
 case "$(uname -s)" in
   Darwin) OS="darwin"; BIN_EXT="" ;;
@@ -40,7 +51,7 @@ log "Detected: ${OS}/${ARCH_TAG}"
 
 # --- FETCH LATEST RELEASE ---
 log "Fetching latest release info..."
-RELEASE_JSON=$(curl -sSL "${NEMO_RELEASE_URL}") ||
+RELEASE_JSON=$(fetch "${NEMO_RELEASE_URL}") ||
   error "Failed to fetch release info. Check internet/GitHub access."
 
 DOWNLOAD_URL=$(echo "${RELEASE_JSON}" | grep -o '"browser_download_url": "[^"]*' | grep "${BIN_NAME}" | head -1 | cut -d'"' -f4) ||
@@ -56,21 +67,25 @@ TMP_DIR=$(mktemp -d)
 trap 'rm -rf "$TMP_DIR"' EXIT
 
 log "Downloading ${BIN_NAME}..."
-curl -sSL "${DOWNLOAD_URL}" -o "${TMP_DIR}/nemoclaw" ||
+fetch "${DOWNLOAD_URL}" > "${TMP_DIR}/nemoclaw" ||
   error "Failed to download binary."
 
 log "Downloading SHA256SUMS..."
-curl -sSL "${CHECKSUM_URL}" -o "${TMP_DIR}/SHA256SUMS" ||
+fetch "${CHECKSUM_URL}" > "${TMP_DIR}/SHA256SUMS" ||
   error "Failed to download SHA256SUMS."
 
 log "Downloading signature..."
-curl -sSL "${SIGNATURE_URL}" -o "${TMP_DIR}/SHA256SUMS.asc" ||
+fetch "${SIGNATURE_URL}" > "${TMP_DIR}/SHA256SUMS.asc" ||
   error "Failed to download signature."
 
 # --- VERIFY SIGNATURE ---
 log "Importing NVIDIA signing key..."
-gpg --quiet --batch --yes --import <(curl -sSL "${NEMO_KEY_URL}") 2>/dev/null ||
-  warn "GPG key import failed (GPG may not be installed). Skipping signature check."
+if command -v gpg >/dev/null 2>&1; then
+  gpg --quiet --batch --yes --import <(fetch "${NEMO_KEY_URL}") 2>/dev/null ||
+    warn "GPG key import failed. Signature checks may fail."
+else
+  warn "GPG not installed. Skipping key import; signature check will be skipped."
+fi
 
 if command -v gpg >/dev/null 2>&1; then
   if gpg --verify "${TMP_DIR}/SHA256SUMS.asc" "${TMP_DIR}/SHA256SUMS" 2>/dev/null; then
@@ -84,10 +99,20 @@ fi
 
 # --- VERIFY CHECKSUM ---
 log "Verifying SHA256..."
-if sha256sum -c "${TMP_DIR}/SHA256SUMS" --ignore-missing 2>/dev/null | grep -q "OK"; then
-  log "✓ Binary checksum OK."
+if command -v sha256sum >/dev/null 2>&1; then
+  if sha256sum -c "${TMP_DIR}/SHA256SUMS" --ignore-missing 2>/dev/null | grep -q "OK"; then
+    log "✓ Binary checksum OK."
+  else
+    error "SHA256 verification failed."
+  fi
+elif command -v shasum >/dev/null 2>&1; then
+  if shasum -a 256 -c "${TMP_DIR}/SHA256SUMS" 2>/dev/null | grep -q "OK"; then
+    log "✓ Binary checksum OK."
+  else
+    error "SHA256 verification failed."
+  fi
 else
-  error "SHA256 verification failed."
+  warn "No sha256sum or shasum found; skipping checksum verification."
 fi
 
 # --- INSTALL LOCATION ---
@@ -115,7 +140,14 @@ fi
 # --- COPY & CHMOD ---
 cp "${TMP_DIR}/nemoclaw" "${INSTALL_PATH}"
 chmod +x "${INSTALL_PATH}"
-log "✓ Installed: $(realpath "${INSTALL_PATH}")"
+if command -v realpath >/dev/null 2>&1; then
+  INSTALLED_REALPATH=$(realpath "${INSTALL_PATH}")
+elif command -v python3 >/dev/null 2>&1; then
+  INSTALLED_REALPATH=$(python3 -c 'import os,sys;print(os.path.realpath(sys.argv[1]))' "${INSTALL_PATH}")
+else
+  INSTALLED_REALPATH="${INSTALL_PATH}"
+fi
+log "✓ Installed: ${INSTALLED_REALPATH}"
 
 # --- ADD TO PATH? ---
 if [[ ":$PATH:" != *":${INSTALL_DIR}:"* ]]; then
