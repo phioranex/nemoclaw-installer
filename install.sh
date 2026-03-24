@@ -3,9 +3,10 @@
 set -Eeuo pipefail
 
 REPO_URL="https://github.com/phioranex/nemoclaw-installer"
-OPENCLAW_INSTALL_URL="https://openclaw.ai/install.sh"
-MIN_NODE_MAJOR=22
-MIN_NODE_MINOR=16
+NEMOCLAW_INSTALL_URL="https://www.nvidia.com/nemoclaw.sh"
+NEMOCLAW_UNINSTALL_URL="https://raw.githubusercontent.com/NVIDIA/NemoClaw/refs/heads/main/uninstall.sh"
+MIN_NODE_MAJOR=20
+MIN_NPM_MAJOR=10
 RECOMMENDED_NODE_MAJOR=24
 
 COLOR_RESET="\033[0m"
@@ -71,13 +72,13 @@ print_banner() {
 | |\  |  __/ | | | | | (_) | |___| | (_| |\ V  V /     
 |_| \_|\___|_| |_| |_|\___/ \____|_|\__,_| \_/\_/      
 
-  _           _        _ _           
- (_)_ __  ___| |_ __ _| | | ___ _ __ 
- | | '_ \/ __| __/ _` | | |/ _ \ '__|
- | | | | \__ \ || (_| | | |  __/ |   
- |_|_| |_|___/\__\__,_|_|_|\___|_|   
+ _           _        _ _           
+(_)_ __  ___| |_ __ _| | | ___ _ __ 
+| | '_ \/ __| __/ _` | | |/ _ \ '__|
+| | | | \__ \ || (_| | | |  __/ |   
+|_|_| |_|___/\__\__,_|_|_|\___|_|   
 
-  Community one-line installer for a NemoClaw-style setup
+  Community one-line installer for NVIDIA NemoClaw
 EOF
 }
 
@@ -86,10 +87,12 @@ usage() {
 Usage: bash install.sh [options]
 
 Options:
-  --yes, -y         Non-interactive mode where possible
-  --skip-onboard    Install OpenClaw but do not start onboarding
-  --uninstall       Remove OpenClaw, its service, and common local data
-  --help, -h        Show this help text
+  --yes, -y            Non-interactive mode where possible
+  --skip-onboard       Install the nemoclaw CLI only, then stop
+  --uninstall          Run the official NemoClaw uninstaller
+  --keep-openshell     Preserve the openshell binary during uninstall
+  --delete-models      Remove Ollama models during uninstall
+  --help, -h           Show this help text
 
 Repo: ${REPO_URL}
 EOF
@@ -98,7 +101,11 @@ EOF
 NONINTERACTIVE=0
 SKIP_ONBOARD=0
 UNINSTALL_MODE=0
-TOTAL_STEPS=3
+KEEP_OPENSHELL=0
+DELETE_MODELS=0
+TOTAL_STEPS=4
+SUDO=""
+OS=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -111,6 +118,12 @@ while [[ $# -gt 0 ]]; do
     --uninstall)
       UNINSTALL_MODE=1
       ;;
+    --keep-openshell)
+      KEEP_OPENSHELL=1
+      ;;
+    --delete-models)
+      DELETE_MODELS=1
+      ;;
     --help|-h)
       usage
       exit 0
@@ -121,9 +134,6 @@ while [[ $# -gt 0 ]]; do
   esac
   shift
 done
-
-SUDO=""
-OS=""
 
 trap 'die "Installation stopped unexpectedly. Scroll up for the failing step."' ERR
 
@@ -149,7 +159,7 @@ ensure_line_in_file() {
 
   if ! grep -Fqx "$line_text" "$file" 2>/dev/null; then
     printf "\n%s\n" "$line_text" >> "$file"
-    success "Updated $file so Node.js works in new terminals."
+    success "Updated $file so NemoClaw works in new terminals."
   fi
 }
 
@@ -192,54 +202,6 @@ detect_os() {
   esac
 }
 
-node_version_ok() {
-  if ! require_cmd node; then
-    return 1
-  fi
-
-  local raw major minor
-  raw="$(node -v | sed 's/^v//')"
-  major="${raw%%.*}"
-  minor="$(printf '%s' "$raw" | cut -d. -f2)"
-
-  if (( major > MIN_NODE_MAJOR )); then
-    return 0
-  fi
-
-  if (( major == MIN_NODE_MAJOR && minor >= MIN_NODE_MINOR )); then
-    return 0
-  fi
-
-  return 1
-}
-
-show_intro() {
-  clear 2>/dev/null || true
-  print_banner
-  headline "Beginner-friendly setup for a safer OpenClaw workflow"
-  cat <<EOF
-
-${COLOR_BOLD}What this script does${COLOR_RESET}
-EOF
-  feature "installs missing beginner-unfriendly system dependencies"
-  feature "installs or upgrades Node.js when needed"
-  feature "runs the public OpenClaw installer as the available base runtime"
-  feature "leaves you with next steps for onboarding and safer setup"
-  cat <<EOF
-
-${COLOR_BOLD}What this script is not${COLOR_RESET}
-EOF
-  feature "not an official NVIDIA installer"
-  feature "not a replacement for reading security guidance before enabling risky skills"
-  cat <<EOF
-
-Public context as of March 24, 2026:
-- NVIDIA announced NemoClaw on March 22, 2026 as a security/privacy layer for OpenClaw.
-- The public install flow available today is still the OpenClaw installer at ${OPENCLAW_INSTALL_URL}
-
-EOF
-}
-
 confirm() {
   local prompt="$1"
 
@@ -252,23 +214,26 @@ confirm() {
   [[ "$reply" =~ ^([Yy]|[Yy][Ee][Ss])$ ]]
 }
 
-show_install_overview() {
-  TOTAL_STEPS=3
-  headline "Installation plan"
-  feature "Step 1: detect your OS and install missing tools"
-  feature "Step 2: make sure Node.js is new enough"
-  feature "Step 3: install OpenClaw and hand over next steps"
-  printf "\n"
+node_version_ok() {
+  if ! require_cmd node; then
+    return 1
+  fi
+
+  local raw major
+  raw="$(node -v | sed 's/^v//')"
+  major="${raw%%.*}"
+  (( major >= MIN_NODE_MAJOR ))
 }
 
-show_uninstall_overview() {
-  TOTAL_STEPS=4
-  headline "Removal plan"
-  feature "Step 1: stop and uninstall the OpenClaw gateway if present"
-  feature "Step 2: remove local state, workspace, and common service files"
-  feature "Step 3: uninstall the global OpenClaw CLI"
-  feature "Step 4: confirm what was removed and what to check manually"
-  printf "\n"
+npm_version_ok() {
+  if ! require_cmd npm; then
+    return 1
+  fi
+
+  local raw major
+  raw="$(npm -v)"
+  major="${raw%%.*}"
+  (( major >= MIN_NPM_MAJOR ))
 }
 
 install_homebrew() {
@@ -297,21 +262,8 @@ ensure_brew() {
   require_cmd brew || die "Homebrew installation completed, but 'brew' is still not available in PATH."
 }
 
-install_macos_prereqs() {
-  ensure_brew
-  run_cmd brew update
-  run_cmd brew install git curl
-
-  if ! node_version_ok; then
-    run_cmd brew install node@24
-    if [[ -d "$(brew --prefix node@24)/bin" ]]; then
-      export PATH="$(brew --prefix node@24)/bin:$PATH"
-    fi
-  fi
-}
-
 persist_macos_node_path() {
-  local node24_bin shell_rc line_text
+  local node24_bin shell_rc
 
   [[ "$OS" == "macos" ]] || return 0
   require_cmd brew || return 0
@@ -319,9 +271,40 @@ persist_macos_node_path() {
   node24_bin="$(brew --prefix node@24 2>/dev/null)/bin"
   [[ -d "$node24_bin" ]] || return 0
 
-  line_text="export PATH=\"${node24_bin}:\$PATH\""
   shell_rc="$(detect_shell_rc)"
-  ensure_line_in_file "$shell_rc" "$line_text"
+  ensure_line_in_file "$shell_rc" "export PATH=\"${node24_bin}:\$PATH\""
+}
+
+persist_npm_global_bin() {
+  local npm_prefix npm_bin shell_rc
+
+  require_cmd npm || return 0
+  npm_prefix="$(npm prefix -g 2>/dev/null || true)"
+  [[ -n "$npm_prefix" ]] || return 0
+
+  npm_bin="${npm_prefix}/bin"
+  [[ -d "$npm_bin" ]] || return 0
+
+  case ":$PATH:" in
+    *":${npm_bin}:"*)
+      return 0
+      ;;
+  esac
+
+  shell_rc="$(detect_shell_rc)"
+  ensure_line_in_file "$shell_rc" "export PATH=\"${npm_bin}:\$PATH\""
+  export PATH="${npm_bin}:$PATH"
+}
+
+install_macos_prereqs() {
+  ensure_brew
+  run_cmd brew update
+  run_cmd brew install curl git
+
+  if ! node_version_ok || ! npm_version_ok; then
+    run_cmd brew install node@24
+    export PATH="$(brew --prefix node@24)/bin:$PATH"
+  fi
 }
 
 linux_pkg_manager() {
@@ -343,20 +326,20 @@ linux_pkg_manager() {
 install_linux_prereqs() {
   local pm
   pm="$(linux_pkg_manager)"
-  [[ -n "$pm" ]] || die "No supported package manager found. Please install git, curl, and Node.js manually."
+  [[ -n "$pm" ]] || die "No supported package manager found. Please install curl, git, Node.js, npm, and Docker manually."
 
   case "$pm" in
     apt)
       run_root apt-get update
       run_root apt-get install -y ca-certificates curl git build-essential
-      if ! node_version_ok; then
+      if ! node_version_ok || ! npm_version_ok; then
         run_cmd bash -c "$(curl -fsSL https://deb.nodesource.com/setup_24.x)"
         run_root apt-get install -y nodejs
       fi
       ;;
     dnf)
       run_root dnf install -y ca-certificates curl git gcc-c++ make
-      if ! node_version_ok; then
+      if ! node_version_ok || ! npm_version_ok; then
         run_root dnf module disable -y nodejs || true
         run_cmd bash -c "$(curl -fsSL https://rpm.nodesource.com/setup_24.x)"
         run_root dnf install -y nodejs
@@ -364,7 +347,7 @@ install_linux_prereqs() {
       ;;
     yum)
       run_root yum install -y ca-certificates curl git gcc-c++ make
-      if ! node_version_ok; then
+      if ! node_version_ok || ! npm_version_ok; then
         run_cmd bash -c "$(curl -fsSL https://rpm.nodesource.com/setup_24.x)"
         run_root yum install -y nodejs
       fi
@@ -379,7 +362,7 @@ install_linux_prereqs() {
   esac
 }
 
-ensure_requirements() {
+ensure_prereqs() {
   step 1 "Preparing your machine"
   detect_os
   setup_sudo
@@ -399,141 +382,197 @@ ensure_requirements() {
   require_cmd npm || die "'npm' is still missing after dependency installation."
 
   if ! node_version_ok; then
-    die "Node.js $(node -v) is too old. Please install Node ${MIN_NODE_MAJOR}.${MIN_NODE_MINOR}+ or Node ${RECOMMENDED_NODE_MAJOR}."
+    die "Node.js $(node -v) is too old. NemoClaw requires Node ${MIN_NODE_MAJOR}+."
+  fi
+
+  if ! npm_version_ok; then
+    die "npm $(npm -v) is too old. NemoClaw requires npm ${MIN_NPM_MAJOR}+."
   fi
 
   persist_macos_node_path
+  persist_npm_global_bin
 }
 
-install_openclaw() {
-  step 3 "Installing OpenClaw"
-  log "Running the public OpenClaw installer"
-  if (( SKIP_ONBOARD == 1 )); then
-    curl -fsSL "${OPENCLAW_INSTALL_URL}" | bash -s -- --no-onboard
+docker_ready() {
+  require_cmd docker || return 1
+  docker info >/dev/null 2>&1
+}
+
+ensure_macos_runtime() {
+  if docker_ready; then
+    return 0
+  fi
+
+  if require_cmd colima; then
+    log "Starting Colima so NemoClaw has a supported container runtime"
+    colima start
   else
-    curl -fsSL "${OPENCLAW_INSTALL_URL}" | bash
-  fi
-}
-
-remove_path_if_exists() {
-  local target="$1"
-  if [[ -e "$target" || -L "$target" ]]; then
-    log "Removing $target"
-    rm -rf "$target"
-  fi
-}
-
-remove_openclaw_service() {
-  step 1 "Stopping and removing the OpenClaw gateway"
-
-  if require_cmd openclaw; then
-    if openclaw uninstall --all --yes --non-interactive; then
-      success "OpenClaw uninstall command completed."
-      return 0
+    warn "No running Docker-compatible runtime detected."
+    warn "NVIDIA docs list Colima or Docker Desktop as the supported macOS runtimes for NemoClaw."
+    if confirm "Install Colima and Docker CLI automatically with Homebrew?"; then
+      run_cmd brew install colima docker
+      run_cmd colima start
     fi
-
-    warn "Built-in uninstall did not complete cleanly. Falling back to manual cleanup."
-    openclaw gateway stop || true
-    openclaw gateway uninstall || true
-  else
-    warn "'openclaw' command not found. Using manual cleanup only."
   fi
 
-  case "${OS}" in
+  docker_ready || die "A running Docker-compatible runtime is required. Install Docker Desktop or Colima, then rerun the installer."
+}
+
+ensure_linux_runtime() {
+  if docker_ready; then
+    return 0
+  fi
+
+  warn "NemoClaw requires a running Docker daemon on Linux."
+  die "Install and start Docker, then rerun this installer."
+}
+
+ensure_runtime() {
+  step 2 "Checking the container runtime"
+
+  case "$OS" in
     macos)
-      launchctl bootout "gui/${UID}/ai.openclaw.gateway" >/dev/null 2>&1 || true
-      remove_path_if_exists "${HOME}/Library/LaunchAgents/ai.openclaw.gateway.plist"
-      remove_path_if_exists "${HOME}/Library/LaunchAgents/com.openclaw.gateway.plist"
+      ensure_macos_runtime
       ;;
     linux)
-      if require_cmd systemctl; then
-        systemctl --user disable --now openclaw-gateway.service >/dev/null 2>&1 || true
-        remove_path_if_exists "${HOME}/.config/systemd/user/openclaw-gateway.service"
-        systemctl --user daemon-reload >/dev/null 2>&1 || true
-      fi
+      ensure_linux_runtime
       ;;
   esac
+
+  success "Container runtime is ready."
 }
 
-remove_openclaw_data() {
-  step 2 "Removing local state and workspace"
-  remove_path_if_exists "${OPENCLAW_STATE_DIR:-$HOME/.openclaw}"
-  remove_path_if_exists "${HOME}/.openclaw-default"
-  remove_path_if_exists "${HOME}/.openclaw/workspace"
-  remove_path_if_exists "${HOME}/.config/openclaw"
+install_nemoclaw_cli() {
+  step 3 "Installing the NemoClaw CLI"
+  run_cmd npm install -g nemoclaw
+  persist_npm_global_bin
+  require_cmd nemoclaw || die "The NemoClaw CLI installed, but 'nemoclaw' is not in PATH yet. Open a new terminal and try again."
+  success "NemoClaw CLI is installed."
 }
 
-remove_openclaw_cli() {
-  step 3 "Removing the global OpenClaw CLI"
-
-  if require_cmd npm; then
-    npm rm -g openclaw >/dev/null 2>&1 || warn "Global npm uninstall did not complete cleanly."
-  else
-    warn "'npm' is not available, so the global CLI could not be removed automatically."
-  fi
-
-  if [[ "$OS" == "macos" ]]; then
-    remove_path_if_exists "/Applications/OpenClaw.app"
-  fi
-}
-
-print_uninstall_summary() {
-  step 4 "Review"
+run_nemoclaw_onboard() {
+  step 4 "Launching the NemoClaw onboarding wizard"
   cat <<EOF
 
-${COLOR_GREEN}${COLOR_BOLD}Removal complete.${COLOR_RESET}
+${COLOR_BOLD}Heads up${COLOR_RESET}
+- The official wizard will prompt for your NVIDIA API key.
+- The first run stores it in ${COLOR_CYAN}~/.nemoclaw/credentials.json${COLOR_RESET}, per NVIDIA's docs.
+- NemoClaw will create a sandboxed OpenClaw instance during onboarding.
 
-What was cleaned up:
 EOF
-  feature "gateway service when present"
-  feature "default state and workspace locations"
-  feature "global npm-installed OpenClaw CLI when npm was available"
-  cat <<EOF
+  if (( NONINTERACTIVE == 1 )); then
+    warn "Non-interactive mode installs the CLI, but onboarding still requires interactive answers for the API key and sandbox setup."
+  fi
 
-What may still need manual removal:
-EOF
-  feature "profile-specific state dirs such as ~/.openclaw-work or ~/.openclaw-lab"
-  feature "custom config paths set through OPENCLAW_CONFIG_PATH"
-  feature "custom workspaces outside the default OpenClaw state dir"
-  printf "\n"
+  run_cmd nemoclaw onboard
 }
 
-print_post_install() {
+run_official_installer() {
+  step 3 "Running NVIDIA's official NemoClaw installer"
+  cat <<EOF
+
+${COLOR_BOLD}Heads up${COLOR_RESET}
+- The official installer will prompt for your NVIDIA API key.
+- NemoClaw creates a fresh OpenClaw instance inside the sandbox during onboarding.
+- After install, use ${COLOR_CYAN}nemoclaw --help${COLOR_RESET} for the full CLI reference.
+
+EOF
+  curl -fsSL "${NEMOCLAW_INSTALL_URL}" | bash
+}
+
+print_install_summary() {
   headline "You are ready to launch"
   cat <<EOF
 
-${COLOR_GREEN}${COLOR_BOLD}NemoClaw-style bootstrap complete.${COLOR_RESET}
-
-Installed base runtime:
-- OpenClaw CLI via the public installer
+${COLOR_GREEN}${COLOR_BOLD}NemoClaw install complete.${COLOR_RESET}
 
 Recommended next steps:
-1. Run ${COLOR_CYAN}openclaw --version${COLOR_RESET} to confirm the CLI is available.
-2. Run ${COLOR_CYAN}openclaw doctor${COLOR_RESET} to catch config issues early.
-3. If onboarding was skipped, run ${COLOR_CYAN}openclaw onboard --install-daemon${COLOR_RESET}.
-4. Before enabling skills with terminal or file access, isolate this agent on a dedicated machine, VM, or low-privilege account.
+1. Run ${COLOR_CYAN}nemoclaw --help${COLOR_RESET} to see the host-side commands.
+2. Run ${COLOR_CYAN}nemoclaw list${COLOR_RESET} to see your registered sandboxes.
+3. Connect with ${COLOR_CYAN}nemoclaw <sandbox-name> connect${COLOR_RESET}.
+4. In the sandbox shell, use ${COLOR_CYAN}openclaw tui${COLOR_RESET} for chat.
 
-Helpful links:
-- OpenClaw install docs: https://docs.openclaw.ai/install/index
-- OpenClaw security guidance: https://docs.openclaw.ai
-- This installer repo: ${REPO_URL}
+Useful references:
+- NVIDIA docs: https://docs.nvidia.com/nemoclaw/latest/index.html
+- Quickstart: https://docs.nvidia.com/nemoclaw/latest/quickstart.html
+- Commands: https://docs.nvidia.com/nemoclaw/latest/reference/commands.html
 
 EOF
 }
 
 run_uninstall() {
-  detect_os
-  show_uninstall_overview
+  headline "Official NemoClaw removal"
+  feature "This uses NVIDIA's official NemoClaw uninstaller."
+  feature "It removes NemoClaw state, OpenShell sandboxes, gateway/providers, and the global nemoclaw package."
+  feature "By default it preserves shared tools such as Docker, Node.js, npm, and Ollama."
+  printf "\n"
 
-  if ! confirm "Continue and remove OpenClaw plus common local data?"; then
+  if ! confirm "Continue and remove NemoClaw?"; then
     die "Removal cancelled by user."
   fi
 
-  remove_openclaw_service
-  remove_openclaw_data
-  remove_openclaw_cli
-  print_uninstall_summary
-  success "Everything requested has been removed."
+  log "Running NVIDIA's official NemoClaw uninstaller"
+  if (( NONINTERACTIVE == 1 )) && (( KEEP_OPENSHELL == 1 )) && (( DELETE_MODELS == 1 )); then
+    curl -fsSL "${NEMOCLAW_UNINSTALL_URL}" | bash -s -- --yes --keep-openshell --delete-models
+  elif (( NONINTERACTIVE == 1 )) && (( KEEP_OPENSHELL == 1 )); then
+    curl -fsSL "${NEMOCLAW_UNINSTALL_URL}" | bash -s -- --yes --keep-openshell
+  elif (( NONINTERACTIVE == 1 )) && (( DELETE_MODELS == 1 )); then
+    curl -fsSL "${NEMOCLAW_UNINSTALL_URL}" | bash -s -- --yes --delete-models
+  elif (( KEEP_OPENSHELL == 1 )) && (( DELETE_MODELS == 1 )); then
+    curl -fsSL "${NEMOCLAW_UNINSTALL_URL}" | bash -s -- --keep-openshell --delete-models
+  elif (( NONINTERACTIVE == 1 )); then
+    curl -fsSL "${NEMOCLAW_UNINSTALL_URL}" | bash -s -- --yes
+  elif (( KEEP_OPENSHELL == 1 )); then
+    curl -fsSL "${NEMOCLAW_UNINSTALL_URL}" | bash -s -- --keep-openshell
+  elif (( DELETE_MODELS == 1 )); then
+    curl -fsSL "${NEMOCLAW_UNINSTALL_URL}" | bash -s -- --delete-models
+  else
+    curl -fsSL "${NEMOCLAW_UNINSTALL_URL}" | bash
+  fi
+}
+
+show_intro() {
+  clear 2>/dev/null || true
+  print_banner
+  headline "Beginner-friendly setup for NVIDIA NemoClaw"
+  cat <<EOF
+
+${COLOR_BOLD}What NemoClaw is${COLOR_RESET}
+EOF
+  feature "the host-side security stack and CLI from NVIDIA"
+  feature "a way to run OpenClaw inside NVIDIA OpenShell with managed policy and inference"
+  feature "an onboarding flow that prompts for your NVIDIA API key and creates a sandboxed agent"
+  cat <<EOF
+
+${COLOR_BOLD}What this script does${COLOR_RESET}
+EOF
+  feature "installs missing beginner-unfriendly dependencies"
+  feature "checks for a supported container runtime"
+  feature "installs the NemoClaw CLI or runs NVIDIA's official installer"
+  feature "makes PATH updates stick for future terminals when needed"
+  cat <<EOF
+
+Official docs verified on March 24, 2026:
+- Quick install: ${NEMOCLAW_INSTALL_URL}
+- API key prompt happens during ${COLOR_CYAN}nemoclaw onboard${COLOR_RESET}
+- The first run saves credentials to ${COLOR_CYAN}~/.nemoclaw/credentials.json${COLOR_RESET}
+
+EOF
+}
+
+show_install_overview() {
+  TOTAL_STEPS=4
+  headline "Installation plan"
+  feature "Step 1: detect your OS and install missing tools"
+  feature "Step 2: make sure a supported container runtime is available"
+  if (( SKIP_ONBOARD == 1 )); then
+    feature "Step 3: install the nemoclaw CLI"
+    feature "Step 4: stop before onboarding so you can run it later"
+  else
+    feature "Step 3: install NemoClaw using NVIDIA's official flow"
+    feature "Step 4: complete onboarding and create a sandboxed OpenClaw instance"
+  fi
+  printf "\n"
 }
 
 main() {
@@ -546,15 +585,30 @@ main() {
 
   show_install_overview
 
-  if ! confirm "Continue with the automated install?"; then
+  if ! confirm "Continue with the automated NemoClaw install?"; then
     die "Installation cancelled by user."
   fi
 
-  ensure_requirements
-  step 2 "Checking your Node.js runtime"
-  success "Node.js $(node -v) is ready."
-  install_openclaw
-  print_post_install
+  ensure_prereqs
+  ensure_runtime
+
+  if (( SKIP_ONBOARD == 1 )); then
+    install_nemoclaw_cli
+    step 4 "Skipping onboarding"
+    cat <<EOF
+
+${COLOR_GREEN}${COLOR_BOLD}NemoClaw CLI installed.${COLOR_RESET}
+
+Next step:
+- Run ${COLOR_CYAN}nemoclaw onboard${COLOR_RESET} when you are ready to enter your NVIDIA API key and create the sandbox.
+
+EOF
+  else
+    run_official_installer
+    step 4 "Wrapping up"
+  fi
+
+  print_install_summary
   success "All done."
 }
 

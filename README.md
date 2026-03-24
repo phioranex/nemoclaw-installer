@@ -1,44 +1,59 @@
 # NemoClaw Installer
 
-One command for beginners who want a NemoClaw-style setup without manually chasing system packages, Node versions, and CLI install steps.
+One command for beginners who want NVIDIA NemoClaw installed without manually figuring out Node, npm, PATH issues, or basic container-runtime checks.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/phioranex/nemoclaw-installer/main/install.sh | bash
 ```
 
-This repository provides a community bootstrapper. It prepares the system, installs missing dependencies, and then runs the public OpenClaw installer, which is the install base currently documented publicly.
+This repository is a community wrapper around the official NVIDIA NemoClaw install flow. It prepares the machine, checks prerequisites, and then runs the real NemoClaw setup path from NVIDIA's docs.
 
-## What NemoClaw appears to do
+## What NemoClaw is
 
-Based on NVIDIA's March 22, 2026 announcement, NemoClaw is a security and privacy layer for OpenClaw. NVIDIA says it adds:
+According to the NVIDIA NemoClaw Developer Guide, NemoClaw is:
 
-- an isolated sandbox through NVIDIA OpenShell
-- policy-based security, network, and privacy guardrails
-- support for local open models such as NVIDIA Nemotron
-- a privacy router so agents can selectively use cloud frontier models
-- a single-command experience for secure always-on agents
+- the host-side CLI and reference stack
+- a way to run OpenClaw more safely inside NVIDIA OpenShell
+- a system that manages sandboxing, network policy, inference routing, and onboarding
+- a setup flow where `nemoclaw onboard` prompts for your NVIDIA API key and stores it in `~/.nemoclaw/credentials.json`
 
-In plain English: OpenClaw is the agent runtime, and NemoClaw is meant to make that runtime safer and more enterprise-ready.
+Important distinction:
 
-Important note: this repo is not an official NVIDIA project. It is a helper installer that recreates the beginner-friendly "one line" experience by automating the public prerequisites and OpenClaw install flow that are available today.
+- `nemoclaw` is what gets installed on the host
+- OpenClaw gets created inside the sandbox during onboarding
+- if you only see `openclaw`, then you did not actually complete a NemoClaw install flow
 
 ## What this installer does
 
 The script is designed for people who do not want to manually debug setup issues. It will:
 
 - detect macOS or Linux
-- install common missing packages like `curl` and `git`
-- install or upgrade Node.js when your version is too old
-- run the official OpenClaw installer
-- optionally skip onboarding when you want a non-interactive install
-- provide a matching one-line uninstall path
+- install common missing packages like `curl`, `git`, Node.js, and npm when needed
+- check for a supported container runtime
+- on macOS, optionally install and start Colima for beginners if no supported runtime is running
+- run NVIDIA's official NemoClaw installer
+- optionally install only the `nemoclaw` CLI and let you run onboarding later
+- provide a matching uninstall command
 
 ## Supported platforms
 
 - macOS
 - Linux with one of these package managers: `apt`, `dnf`, `yum`, `pacman`, or `zypper`
 
-Windows is not handled by this script directly. For Windows, the safest route is WSL2 and then running the same command inside the WSL terminal.
+Official NVIDIA docs currently list these software requirements:
+
+- Node.js 20 or later
+- npm 10 or later
+- a supported container runtime installed and running
+- OpenShell installed as part of the NemoClaw setup flow
+
+Official runtime support noted by NVIDIA:
+
+- Linux: Docker
+- macOS Apple Silicon: Colima or Docker Desktop
+- Windows: WSL with Docker Desktop backend
+
+This repo focuses on macOS and Linux. Windows users should use WSL and follow NVIDIA's official path there.
 
 ## Usage
 
@@ -54,11 +69,15 @@ curl -fsSL https://raw.githubusercontent.com/phioranex/nemoclaw-installer/main/i
 curl -fsSL https://raw.githubusercontent.com/phioranex/nemoclaw-installer/main/install.sh | bash -s -- --skip-onboard
 ```
 
+This installs the `nemoclaw` CLI but stops before `nemoclaw onboard`.
+
 ### Non-interactive install
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/phioranex/nemoclaw-installer/main/install.sh | bash -s -- --yes
 ```
+
+This still may need interactive input later because the official onboarding wizard asks for your NVIDIA API key and sandbox settings.
 
 ### Non-interactive install and skip onboarding
 
@@ -74,12 +93,14 @@ curl -fsSL https://raw.githubusercontent.com/phioranex/nemoclaw-installer/main/i
 curl -fsSL https://raw.githubusercontent.com/phioranex/nemoclaw-installer/main/uninstall.sh | bash
 ```
 
-This runs the installer in uninstall mode and removes:
+This calls the official NVIDIA NemoClaw uninstaller. NVIDIA says it removes:
 
-- the OpenClaw gateway service when present
-- the default local state directory such as `~/.openclaw`
-- the default workspace inside that state directory
-- the globally installed npm `openclaw` CLI
+- NemoClaw state
+- OpenShell sandboxes, gateway, and providers
+- related Docker images and containers
+- the global `nemoclaw` npm package
+
+It does not remove shared tooling like Docker, Node.js, npm, or Ollama by default.
 
 ### Non-interactive full removal
 
@@ -87,51 +108,75 @@ This runs the installer in uninstall mode and removes:
 curl -fsSL https://raw.githubusercontent.com/phioranex/nemoclaw-installer/main/uninstall.sh | bash -s -- --yes
 ```
 
-### What may still remain
+### Keep OpenShell during uninstall
 
-The uninstaller also tells the user this, but it is worth calling out here:
+```bash
+curl -fsSL https://raw.githubusercontent.com/phioranex/nemoclaw-installer/main/uninstall.sh | bash -s -- --keep-openshell
+```
 
-- profile-specific state directories like `~/.openclaw-work`
-- custom config paths set with `OPENCLAW_CONFIG_PATH`
-- custom workspaces outside the default OpenClaw state folder
+### Also remove Ollama models
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/phioranex/nemoclaw-installer/main/uninstall.sh | bash -s -- --delete-models
+```
 
 ## After install
 
-Run these commands to verify everything:
+Run these commands to verify that NemoClaw is what got installed:
 
 ```bash
-openclaw --version
-openclaw doctor
-openclaw gateway status
+nemoclaw --help
+nemoclaw list
 ```
 
-If you skipped onboarding:
+If you skipped onboarding, or want to start setup later:
 
 ```bash
-openclaw onboard --install-daemon
+nemoclaw onboard
 ```
 
-## Why this exists
+During onboarding, NVIDIA's docs say NemoClaw will:
 
-The beginner pain is not usually the final install command. It is everything around it:
+- prompt for your NVIDIA API key
+- save it to `~/.nemoclaw/credentials.json`
+- create the OpenShell gateway and providers
+- build the sandbox image
+- create a sandboxed OpenClaw instance
 
-- missing package managers
-- old Node versions
-- missing `git` or `curl`
-- uncertainty about what to run next
+After onboarding, connect with:
 
-This project smooths out that setup path so someone can paste one command and let the script do the heavy lifting.
+```bash
+nemoclaw <sandbox-name> connect
+```
+
+Inside the sandbox shell, start the OpenClaw interface with:
+
+```bash
+openclaw tui
+```
+
+## Why this wrapper exists
+
+The hard part for many beginners is not the last command. It is everything around it:
+
+- missing system packages
+- outdated Node or npm versions
+- PATH issues after install
+- missing or stopped container runtime
+- uncertainty about whether they installed `nemoclaw` or just `openclaw`
+
+This project smooths out that host-side setup so the beginner can run one command and reach the actual NVIDIA NemoClaw flow more easily.
 
 ## Security note
 
-OpenClaw-style agents can have real access to files, tools, networks, and accounts. Even NVIDIA's own public OpenClaw guidance warns about data exposure and malicious code risk.
+NVIDIA marks NemoClaw as alpha software and says it is not production-ready. Treat it like an experimental agent stack with real file, tool, network, and credential risk.
 
 Before you enable high-privilege skills:
 
 - use a dedicated machine, VM, or low-privilege account
-- avoid exposing the web UI to the public internet
-- install only trusted skills
-- treat terminal-enabled skills as high risk
+- prefer test credentials instead of personal or production accounts
+- keep the host runtime and allowed endpoints tightly scoped
+- review the NVIDIA docs for network policy and sandbox behavior
 
 ## Publish checklist
 
@@ -143,10 +188,12 @@ Before sharing the one-liner publicly:
 3. Confirm the uninstall URL works:
    `https://raw.githubusercontent.com/phioranex/nemoclaw-installer/main/uninstall.sh`
 4. Test on a clean machine or VM.
-5. Then share the command from the top of this README.
+5. Verify that the install ends with a working `nemoclaw` command, not just `openclaw`.
+6. Then share the command from the top of this README.
 
 ## Sources
 
-- [NVIDIA press release, March 22, 2026](https://nvidianews.nvidia.com/_gallery/download_pdf/69b8651d3d633215999f2ac1/)
-- [NVIDIA OpenClaw on DGX Spark guide](https://build.nvidia.com/spark/openclaw/overview)
-- [OpenClaw install docs](https://docs.openclaw.ai/install/index)
+- [NVIDIA NemoClaw Developer Guide](https://docs.nvidia.com/nemoclaw/latest/index.html)
+- [NVIDIA NemoClaw Quickstart](https://docs.nvidia.com/nemoclaw/latest/quickstart.html)
+- [NVIDIA NemoClaw Commands Reference](https://docs.nvidia.com/nemoclaw/latest/reference/commands.html)
+- [NVIDIA/NemoClaw GitHub repository](https://github.com/NVIDIA/NemoClaw)
