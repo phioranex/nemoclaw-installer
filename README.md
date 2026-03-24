@@ -1,101 +1,152 @@
 # NemoClaw Installer
 
-This repository contains an interactive installer script for NemoClaw (NVIDIA/nemoclaw). The installer downloads the latest release binary, verifies its GPG signature and SHA256 checksum, and installs the `nemoclaw` binary into a user-local bin directory (`~/.local/bin` by default).
+One command for beginners who want a NemoClaw-style setup without manually chasing system packages, Node versions, and CLI install steps.
 
-## Overview
-
-- Verifies GPG signature & SHA256 checksum (when available).
-- Supports Linux and macOS (x86_64 and ARM64 / aarch64).
-- Installs to `~/.local/bin` by default and can add that directory to your `PATH`.
-
-## Prerequisites
-
-- `bash`, `curl` (or `wget`)
-- `sha256sum` (on macOS install via `brew install coreutils`)
-- `gpg` / `gnupg` (optional but recommended for signature verification)
-
-On macOS you can install prerequisites with Homebrew:
-
-```
-brew install coreutils gnupg
+```bash
+curl -fsSL https://raw.githubusercontent.com/phioranex/nemoclaw-installer/main/install.sh | bash
 ```
 
-Note: Homebrew's coreutils provides `gsha256sum` and a `gnubin` directory; adding Coreutils' gnubin to your PATH makes `sha256sum` available as expected by the installer.
+This repository provides a community bootstrapper. It prepares the system, installs missing dependencies, and then runs the public OpenClaw installer, which is the install base currently documented publicly.
 
-## Security note
-Do NOT run random installer scripts piped from the internet without reviewing them first. The installer deliberately downloads to a temporary file and performs GPG/SHA256 verification; review the `install.sh` contents before running.
+## What NemoClaw appears to do
 
-## Installation
+Based on NVIDIA's March 22, 2026 announcement, NemoClaw is a security and privacy layer for OpenClaw. NVIDIA says it adds:
 
-1. Download and inspect the installer:
+- an isolated sandbox through NVIDIA OpenShell
+- policy-based security, network, and privacy guardrails
+- support for local open models such as NVIDIA Nemotron
+- a privacy router so agents can selectively use cloud frontier models
+- a single-command experience for secure always-on agents
 
-```
-curl -sSL https://raw.githubusercontent.com/NVIDIA/nemoclaw/main/install.sh -o install.sh
-less install.sh
-```
+In plain English: OpenClaw is the agent runtime, and NemoClaw is meant to make that runtime safer and more enterprise-ready.
 
-2. Run the installer interactively:
+Important note: this repo is not an official NVIDIA project. It is a helper installer that recreates the beginner-friendly "one line" experience by automating the public prerequisites and OpenClaw install flow that are available today.
 
-```
-bash install.sh
-```
+## What this installer does
 
-The installer will:
+The script is designed for people who do not want to manually debug setup issues. It will:
 
-- Detect your OS and architecture.
-- Download the matching release binary and accompanying `SHA256SUMS` and signature.
-- Attempt to import the project's public key and verify the signature (if `gpg` is present).
-- Verify the SHA256 checksum of the downloaded binary.
-- Copy the binary to `~/.local/bin/nemoclaw` (or another path you choose) and make it executable.
-- Optionally add `~/.local/bin` to your shell startup file so `nemoclaw` is available on your `PATH`.
+- detect macOS or Linux
+- install common missing packages like `curl` and `git`
+- install or upgrade Node.js when your version is too old
+- run the official OpenClaw installer
+- optionally skip onboarding when you want a non-interactive install
+- provide a matching one-line uninstall path
 
-Important: The installer is interactive (prompts for confirmation and install path). If you want to run it on multiple machines, inspect or adapt the script for automation.
+## Supported platforms
 
-### One-line installer (quick)
+- macOS
+- Linux with one of these package managers: `apt`, `dnf`, `yum`, `pacman`, or `zypper`
 
-You can run the installer with a single command (no sudo required — installs to your home directory):
+Windows is not handled by this script directly. For Windows, the safest route is WSL2 and then running the same command inside the WSL terminal.
 
-```
-curl -sSL https://raw.githubusercontent.com/NVIDIA/nemoclaw/main/install.sh | bash
-```
+## Usage
 
-This downloads and runs the installer script directly. The script performs signature and checksum verification when possible and is interactive by default.
+### Standard install
 
-If you prefer to inspect before running, download first and then run locally:
-
-```
-curl -sSL https://raw.githubusercontent.com/NVIDIA/nemoclaw/main/install.sh -o install.sh
-less install.sh
-bash install.sh
+```bash
+curl -fsSL https://raw.githubusercontent.com/phioranex/nemoclaw-installer/main/install.sh | bash
 ```
 
-## Troubleshooting
+### Skip onboarding
 
-- "GPG key import failed": `gpg` may not be installed — install `gnupg` and retry.
-- "Signature verification failed": Do not proceed — verification is important. Ensure you have network access to fetch the correct key and that files downloaded correctly.
-- "SHA256 verification failed": The binary may be corrupted or tampered with. Abort and report the issue.
-- If the installer cannot find a binary for your architecture, open an issue: https://github.com/NVIDIA/nemoclaw/issues
+```bash
+curl -fsSL https://raw.githubusercontent.com/phioranex/nemoclaw-installer/main/install.sh | bash -s -- --skip-onboard
+```
+
+### Non-interactive install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/phioranex/nemoclaw-installer/main/install.sh | bash -s -- --yes
+```
+
+### Non-interactive install and skip onboarding
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/phioranex/nemoclaw-installer/main/install.sh | bash -s -- --yes --skip-onboard
+```
 
 ## Uninstall
 
-To remove the installed binary (default location):
+### Full removal
 
+```bash
+curl -fsSL https://raw.githubusercontent.com/phioranex/nemoclaw-installer/main/uninstall.sh | bash
 ```
-rm -f ~/.local/bin/nemoclaw
+
+This runs the installer in uninstall mode and removes:
+
+- the OpenClaw gateway service when present
+- the default local state directory such as `~/.openclaw`
+- the default workspace inside that state directory
+- the globally installed npm `openclaw` CLI
+
+### Non-interactive full removal
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/phioranex/nemoclaw-installer/main/uninstall.sh | bash -s -- --yes
 ```
 
-If the installer added `~/.local/bin` to your shell rc file (e.g., `~/.zshrc`, `~/.bashrc`, or `~/.profile`), remove the lines it added.
+### What may still remain
 
-## Manual install (alternate)
+The uninstaller also tells the user this, but it is worth calling out here:
 
-You can manually download a release binary and verify signatures if you prefer to avoid the installer:
+- profile-specific state directories like `~/.openclaw-work`
+- custom config paths set with `OPENCLAW_CONFIG_PATH`
+- custom workspaces outside the default OpenClaw state folder
 
-- Releases: https://github.com/NVIDIA/nemoclaw/releases
-- Docs: https://docs.nvidia.com/nemoclaw/
-- Example policy: https://github.com/NVIDIA/nemoclaw/blob/main/examples/safe-policy.yaml
+## After install
 
-## Links
+Run these commands to verify everything:
 
-- Repository: https://github.com/NVIDIA/nemoclaw
-- Docs: https://docs.nvidia.com/nemoclaw/
-- Report issues: https://github.com/NVIDIA/nemoclaw/issues
+```bash
+openclaw --version
+openclaw doctor
+openclaw gateway status
+```
+
+If you skipped onboarding:
+
+```bash
+openclaw onboard --install-daemon
+```
+
+## Why this exists
+
+The beginner pain is not usually the final install command. It is everything around it:
+
+- missing package managers
+- old Node versions
+- missing `git` or `curl`
+- uncertainty about what to run next
+
+This project smooths out that setup path so someone can paste one command and let the script do the heavy lifting.
+
+## Security note
+
+OpenClaw-style agents can have real access to files, tools, networks, and accounts. Even NVIDIA's own public OpenClaw guidance warns about data exposure and malicious code risk.
+
+Before you enable high-privilege skills:
+
+- use a dedicated machine, VM, or low-privilege account
+- avoid exposing the web UI to the public internet
+- install only trusted skills
+- treat terminal-enabled skills as high risk
+
+## Publish checklist
+
+Before sharing the one-liner publicly:
+
+1. Push `install.sh`, `uninstall.sh`, and `README.md` to `main`.
+2. Confirm the raw GitHub URL works:
+   `https://raw.githubusercontent.com/phioranex/nemoclaw-installer/main/install.sh`
+3. Confirm the uninstall URL works:
+   `https://raw.githubusercontent.com/phioranex/nemoclaw-installer/main/uninstall.sh`
+4. Test on a clean machine or VM.
+5. Then share the command from the top of this README.
+
+## Sources
+
+- [NVIDIA press release, March 22, 2026](https://nvidianews.nvidia.com/_gallery/download_pdf/69b8651d3d633215999f2ac1/)
+- [NVIDIA OpenClaw on DGX Spark guide](https://build.nvidia.com/spark/openclaw/overview)
+- [OpenClaw install docs](https://docs.openclaw.ai/install/index)
