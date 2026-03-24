@@ -5,9 +5,12 @@ set -Eeuo pipefail
 REPO_URL="https://github.com/phioranex/nemoclaw-installer"
 NEMOCLAW_INSTALL_URL="https://www.nvidia.com/nemoclaw.sh"
 NEMOCLAW_UNINSTALL_URL="https://raw.githubusercontent.com/NVIDIA/NemoClaw/refs/heads/main/uninstall.sh"
+OPENSHELL_INSTALL_URL="https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh"
+OPENSHELL_LATEST_RELEASE_URL="https://github.com/NVIDIA/OpenShell/releases/latest"
 MIN_NODE_MAJOR=20
 MIN_NPM_MAJOR=10
 RECOMMENDED_NODE_MAJOR=24
+FALLBACK_OPENSHELL_VERSION="v0.0.14"
 
 COLOR_RESET="\033[0m"
 COLOR_RED="\033[31m"
@@ -222,6 +225,19 @@ warn_about_github_token() {
   if [[ -n "${GH_TOKEN:-}" || -n "${GITHUB_TOKEN:-}" ]]; then
     warn "Detected GH_TOKEN or GITHUB_TOKEN in the environment."
     warn "If the OpenShell installer fails with 'HTTP 401: Bad credentials', unset those variables and rerun."
+  fi
+}
+
+latest_openshell_version() {
+  local latest_url latest_tag
+
+  latest_url="$(curl -fsSLI -o /dev/null -w '%{url_effective}' "${OPENSHELL_LATEST_RELEASE_URL}" 2>/dev/null || true)"
+  latest_tag="${latest_url##*/}"
+
+  if [[ -n "$latest_tag" && "$latest_tag" == v* ]]; then
+    printf "%s\n" "$latest_tag"
+  else
+    printf "%s\n" "${FALLBACK_OPENSHELL_VERSION}"
   fi
 }
 
@@ -453,8 +469,29 @@ ensure_runtime() {
   success "Container runtime is ready."
 }
 
+ensure_openshell() {
+  local openshell_version
+
+  if require_cmd openshell; then
+    success "OpenShell is already installed."
+    return 0
+  fi
+
+  step 3 "Installing OpenShell"
+  warn_about_github_token
+
+  openshell_version="$(latest_openshell_version)"
+  log "Installing OpenShell ${openshell_version}"
+
+  env -u GH_TOKEN -u GITHUB_TOKEN bash -lc \
+    "curl -LsSf '${OPENSHELL_INSTALL_URL}' | OPENSHELL_VERSION='${openshell_version}' sh"
+
+  require_cmd openshell || die "OpenShell installation did not finish cleanly. Try installing it manually from https://github.com/NVIDIA/OpenShell/releases"
+  success "OpenShell ${openshell_version} is installed."
+}
+
 install_nemoclaw_cli() {
-  step 3 "Installing the NemoClaw CLI"
+  step 4 "Installing the NemoClaw CLI"
   run_cmd npm install -g nemoclaw
   persist_npm_global_bin
   require_cmd nemoclaw || die "The NemoClaw CLI installed, but 'nemoclaw' is not in PATH yet. Open a new terminal and try again."
@@ -462,7 +499,7 @@ install_nemoclaw_cli() {
 }
 
 run_nemoclaw_onboard() {
-  step 4 "Launching the NemoClaw onboarding wizard"
+  step 5 "Launching the NemoClaw onboarding wizard"
   print_block "
 ${COLOR_BOLD}Heads up${COLOR_RESET}
 - The official wizard will prompt for your NVIDIA API key.
@@ -479,7 +516,7 @@ ${COLOR_BOLD}Heads up${COLOR_RESET}
 }
 
 run_official_installer() {
-  step 3 "Running NVIDIA's official NemoClaw installer"
+  step 4 "Running NVIDIA's official NemoClaw installer"
   print_block "
 ${COLOR_BOLD}Heads up${COLOR_RESET}
 - The official installer will prompt for your NVIDIA API key.
@@ -568,16 +605,17 @@ Official docs verified on March 24, 2026:
 }
 
 show_install_overview() {
-  TOTAL_STEPS=4
+  TOTAL_STEPS=5
   headline "Installation plan"
   feature "Step 1: detect your OS and install missing tools"
   feature "Step 2: make sure a supported container runtime is available"
+  feature "Step 3: install OpenShell first so NemoClaw onboarding does not get blocked"
   if (( SKIP_ONBOARD == 1 )); then
-    feature "Step 3: install the nemoclaw CLI"
-    feature "Step 4: stop before onboarding so you can run it later"
+    feature "Step 4: install the nemoclaw CLI"
+    feature "Step 5: stop before onboarding so you can run it later"
   else
-    feature "Step 3: install NemoClaw using NVIDIA's official flow"
-    feature "Step 4: complete onboarding and create a sandboxed OpenClaw instance"
+    feature "Step 4: install NemoClaw using NVIDIA's official flow"
+    feature "Step 5: complete onboarding and create a sandboxed OpenClaw instance"
   fi
   printf "\n"
 }
@@ -598,10 +636,11 @@ main() {
 
   ensure_prereqs
   ensure_runtime
+  ensure_openshell
 
   if (( SKIP_ONBOARD == 1 )); then
     install_nemoclaw_cli
-    step 4 "Skipping onboarding"
+    step 5 "Skipping onboarding"
     print_block "
 ${COLOR_GREEN}${COLOR_BOLD}NemoClaw CLI installed.${COLOR_RESET}
 
@@ -611,7 +650,7 @@ Next step:
 "
   else
     run_official_installer
-    step 4 "Wrapping up"
+    step 5 "Wrapping up"
   fi
 
   print_install_summary

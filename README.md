@@ -21,6 +21,7 @@ Important distinction:
 
 - `nemoclaw` is what gets installed on the host
 - OpenClaw gets created inside the sandbox during onboarding
+- OpenShell is a required dependency in the NemoClaw flow
 - if you only see `openclaw`, then you did not actually complete a NemoClaw install flow
 
 ## What this installer does
@@ -30,6 +31,7 @@ The script is designed for people who do not want to manually debug setup issues
 - detect macOS or Linux
 - install common missing packages like `curl`, `git`, Node.js, and npm when needed
 - check for a supported container runtime
+- install OpenShell first when it is missing, using the latest tagged OpenShell release
 - on macOS, optionally install and start Colima for beginners if no supported runtime is running
 - run NVIDIA's official NemoClaw installer
 - optionally install only the `nemoclaw` CLI and let you run onboarding later
